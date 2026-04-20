@@ -1,6 +1,6 @@
 # Swiss Life API
 
-A FastAPI service that provides text classification and customer information extraction. Built on [BAML](https://docs.boundaryml.com/) for structured LLM output and [Nebius AI](https://nebius.com/) as the inference provider.
+A FastAPI service that provides text classification and customer information extraction. Built on [BAML](https://docs.boundaryml.com/) to ensure an structured LLM output and [Nebius AI](https://nebius.com/) as the inference provider.
 
 ---
 
@@ -9,6 +9,7 @@ A FastAPI service that provides text classification and customer information ext
 - [Architecture Overview](#architecture-overview)
 - [Setup](#setup)
 - [Running the Server](#running-the-server)
+- [Deployment](#deployment)
 - [API Reference](#api-reference)
   - [GET /health](#get-health)
   - [POST /classify](#post-classify)
@@ -18,6 +19,7 @@ A FastAPI service that provides text classification and customer information ext
 - [LLM Models](#llm-models)
 - [Cost Scaling](#cost-scaling)
 - [Streaming Response Format](#streaming-response-format)
+- [Next Steps](#next-steps)
 
 ---
 
@@ -36,11 +38,9 @@ FastAPI (app/main.py)
         └── (with dynamic json_schema) ► BAML ExtractDynamic ──────► ExtractionClient (Gemma 2 2B)
 ```
 
-BAML takes care of building prompts, communicating with the LLM, and parsing typed responses. The API layer converts HTTP requests into BAML calls and returns structured results to the client.
-
 ---
 
-## Setup
+## Local setup
 
 **Prerequisites:** Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
@@ -49,24 +49,49 @@ BAML takes care of building prompts, communicating with the LLM, and parsing typ
    uv sync
    ```
 
-2. Configure environment variables — copy `.env.example` to `.env` and fill in your key:
+2. Configure environment variables — copy `.env.example` to `.env` and fill in the Nebius key:
    ```bash
    cp .env.example .env
    ```
    ```
-   NEBIUS_API_KEY=your_nebius_api_key_here
+   NEBIUS_API_KEY=nebius_api_key_here
    ```
 
----
-
-## Running the Server
+3. Running the Server
 
 ```bash
 uv run uvicorn app.main:app --reload
 ```
 
-The API will be available at `http://localhost:8000`. Interactive docs are at `http://localhost:8000/docs`.
+**The interactive docs are at `http://localhost:8000/docs`.**
 
+
+---
+
+## AWS Deployment
+
+The API runs on AWS App Runner, the Docker image is stored in ECR and the API key is kept in Secrets Manager:
+
+```
+ECR (Docker image)
+    │
+    ▼
+App Runner ──── pulls secret ──► Secrets Manager (NEBIUS_API_KEY)
+    │
+    ▼
+Public HTTPS endpoint
+```
+
+All infrastructure is defined in `terraform/`.
+
+
+**Calling the deployed API**
+
+The easiest ways are:
+- Swagger UI — open `https://<app_url>/docs` in a browser
+- Postman — set method to POST, URL to `https://<app_url>/classify` or `/complete-form`, body as raw JSON
+
+**To know the app_url please contact me**
 ---
 
 ## API Reference
@@ -115,11 +140,7 @@ Each theme object:
 **Example request**
 
 ```bash
-curl -X 'POST' \
-  'http://localhost:8000/classify' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -d '{
+{
     "text": "I am calling because I have a problem with my internet connection",
     "themes": [
         {
@@ -135,7 +156,7 @@ curl -X 'POST' \
             "description": "The customer is calling for a refund"
         }
     ]
-}'
+}
 ```
 
 **Response body**
@@ -208,13 +229,9 @@ CustomerForm
 **Example request**
 
 ```bash
-curl -X 'POST' \
-  'http://localhost:8000/complete-form' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -d '{
+{
  "text": "Agent: Good morning! Thank you for reaching out. I’ll need to collect some basic details to assist you better. Could you please provide your first and last name? Customer: Sure! My name is John Doe. Agent: Thank you, John. May I also ask for your gender? Customer: I'\''d prefer not to share that at the moment. Agent: No problem at all. Now, for contact purposes, could you share your email address? Customer: Yes, my email is johndoe@example.com. Agent: Great! Do you have a phone number where we can reach you? Customer: I’d rather not provide that right now. Agent: That’s completely fine. How would you prefer us to contact you—by email or phone? Customer: Please contact me via Email. Agent: Understood! Lastly, can you share the reason for your call today? Customer: I’m not ready to specify that just yet. Agent: That’s okay, John! I’ve noted everything down. If you need any further assistance, feel free to reach out. Have a great day!"
-}'
+}
 ```
 
 **Example stream output**
@@ -234,7 +251,20 @@ data: {"personal_info":{"first_name":"John","last_name":"Doe","gender":"Refused"
 
 Final event (complete data + extraction status):
 ```
-data: {"personal_info": {"first_name": "John", "last_name": "Doe", "gender": "Refused"}, "contact_info": {"email": "johndoe@example.com", "phone": null, "preferred_contact_method": "Email", "call_reasons": null}, "extraction": "successful"}
+{
+    "personal_info": {
+        "first_name": "John",
+        "last_name": "Doe",
+        "gender": "Refused"
+    },
+    "contact_info": {
+        "email": "johndoe@example.com",
+        "phone": null,
+        "preferred_contact_method": "Email",
+        "call_reasons": null
+    },
+    "extraction": "successful"
+}
 ```
 
 ---
@@ -259,9 +289,7 @@ Supported property types: `string` (default), `integer`, `number`/`float`, `bool
 **Example request**
 
 ```bash
-curl -X POST http://localhost:8000/complete-form \
-  -H "Content-Type: application/json" \
-  -d '{
+{
       "text": "I'm Jane Smith, Im non-binary. Dont call me. My address is P. Sherman 42 Wallaby, I am ten years old. and I like swimming",
       "json_schema": {
         "properties": {
@@ -270,7 +298,7 @@ curl -X POST http://localhost:8000/complete-form \
           "hobbies": { "type": "string" }
         }
       }
-  }'
+  }
 ```
 
 **Output structure**
@@ -285,7 +313,25 @@ DynamicOutput
 **Example final event**
 
 ```
-data: {"personal_info": {"first_name": "Jane", "last_name": "Smith", "gender": "Other", "age": 10}, "contact_info": {"email": null, "phone": null, "preferred_contact_method": null, "call_reasons": null, "work_phone": null}, "complementary_info": {"hobbies": "swimming"}, "extraction": "successful"}
+{
+    "personal_info": {
+        "first_name": "Jane",
+        "last_name": "Smith",
+        "gender": "Other",
+        "age": 10
+    },
+    "contact_info": {
+        "email": null,
+        "phone": null,
+        "preferred_contact_method": null,
+        "call_reasons": null,
+        "work_phone": null
+    },
+    "complementary_info": {
+        "hobbies": "swimming"
+    },
+    "extraction": "successful"
+}
 ```
 
 ---
@@ -316,7 +362,7 @@ Temperature controls how much randomness the model uses when choosing the next t
 
 This is used for the `ClassificationClient` because classification has a single correct answer within a fixed set of themes. Given that the same text should always map to the same theme, and the output is also constrained by a lookup step, where the returned title must exactly match one of the input themes, the the model behaves in a deterministic way, reducing the risk of borderline cases switching between themes.
 
-For the `ExtractionClient`, the default temperature is kept. The fields being extracted are factual (name, phone, email), so the model is already unlikely to vary significantly.
+Note: For the `ExtractionClient`, the default temperature is kept. The fields being extracted are factual (name, phone, email), so the model is already unlikely to vary significantly.
 
 ---
 
@@ -333,3 +379,23 @@ Pricing used: **$0.02 / 1M input tokens**, **$0.06 / 1M output tokens** — 1 00
 | **Combined** | | | | | | **$0.012** | **$0.36** |
 
 ---
+
+## Next Steps
+
+**Experiment tracking with [Comet Opik](https://www.comet.com/site/products/opik/)**
+
+Before trusting the models in production, we need a way to measure whether they are actually doing the task. The plan is to log a sample of real calls to Opik so we can define evaluation metrics (e.g. classification accuracy, extraction completeness) and run them against real examples. This gives us a quantitative baseline to compare models or prompt changes against.
+
+**Human verification**
+
+At some point, a human needs to review a sample of outputs and flag mistakes. This is the ground truth that can be use to validate the automated metrics and catch edge cases the LLM handles poorly (e.g. ambiguous transcripts, mixed-language input, incomplete customer info).
+
+**Observability before going to production**
+
+A few things worth logging before this handles real traffic:
+
+- Latency: time per request, broken down by route
+- Token usage: input and output token counts per call
+- Traces: number of texts classified vs. total requests to `/classify`; number of fields extracted and how many forms used a dynamic JSON schema vs. the hardcoded one
+
+These metrics will help catch regressions, size the infrastructure correctly, and build confidence before a wider rollout.

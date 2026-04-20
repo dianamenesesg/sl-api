@@ -23,3 +23,11 @@ ENV/
 
 # Visual Studio Code
 .vscode/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.secret
+terraform.tfstate.d/
